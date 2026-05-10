@@ -1,0 +1,43 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&family=LXGW+WenKai+Mono+TC&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "LXGW WenKai Mono TC", ui-sans-serif, system-ui, sans-serif;
+  --animate-spin-slow: spin 3s linear infinite;
+}
+
+body {
+  background-color: #fff1f2;
+  background-image: 
+    radial-gradient(at 0% 0%, hsla(330,100%,98%,1) 0, transparent 50%), 
+    radial-gradient(at 50% 0%, hsla(340,100%,97%,1) 0, transparent 50%), 
+    radial-gradient(at 100% 0%, hsla(350,100%,98%,1) 0, transparent 50%);
+  overflow-x: hidden;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #fbcfe8;
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #f9a8d4;
+}
+
+::selection {
+  background-color: #fbcfe8;
+  color: #831843;
+}
+
+:focus-visible {
+  outline: 2px solid #fb7185;
+  outline-offset: 2px;
+}
