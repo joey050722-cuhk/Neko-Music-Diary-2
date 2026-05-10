@@ -294,6 +294,45 @@ export default function MainApp() {
 
   const hasSyncedRef = useRef(false);
 
+  const fetchSongsFromNetease = async (id: string) => {
+      let data = null;
+      try {
+          // Attempt 1: Our local proxy if we are running in full-stack mode
+          const resLocal = await fetch(`/api/netease/playlist/${id}`);
+          if (resLocal.ok) {
+              const resData = await resLocal.json();
+              if (resData.success && resData.songs) return resData.songs;
+          }
+      } catch (e) {}
+
+      try {
+          // Attempt 2: Public proxy 1 (Binaryify)
+          const res = await fetch(`https://neteasecloudmusicapi.vercel.app/playlist/detail?id=${id}`);
+          data = await res.json();
+      } catch (e) {
+          try {
+             // Attempt 3: allorigins raw proxy
+             const res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(`https://music.163.com/api/v1/playlist/detail?id=${id}`)}`);
+             data = await res.json();
+          } catch(err) {
+             console.error("All proxies failed.");
+             return null;
+          }
+      }
+
+      const rawTracks = data?.playlist?.tracks || data?.result?.tracks || [];
+      if (rawTracks.length === 0) return null;
+
+      return rawTracks.map((track: any) => ({
+          id: track.id.toString(),
+          title: track.name,
+          artist: (track.ar || track.artists || []).map((a: any) => a.name).join(', '),
+          albumArt: track.al?.picUrl || (track.album && track.album.picUrl),
+          keywords: track.al?.name ? [track.al.name] : [],
+          mp3Url: `https://music.163.com/song/media/outer/url?id=${track.id}.mp3`
+      }));
+  };
+
   // Auto-sync on first mount or whenever playlistId changes
   useEffect(() => {
     const autoSync = async () => {
@@ -305,11 +344,10 @@ export default function MainApp() {
 
         setSyncLoading(true);
         try {
-            const res = await fetch(`/api/netease/playlist/${playlistId}`);
-            const data = await res.json();
-            if (data.success && data.songs && data.songs.length > 0) {
-                setPlaylistSongs(data.songs);
-                localStorage.setItem(`playlist_${playlistId}`, JSON.stringify(data.songs));
+            const songs = await fetchSongsFromNetease(playlistId);
+            if (songs && songs.length > 0) {
+                setPlaylistSongs(songs);
+                localStorage.setItem(`playlist_${playlistId}`, JSON.stringify(songs));
             } else if (playlistSongs.length === 0) {
                 // Failsafe to default ONLY if API fails completely and we have zero songs
                 setPlaylistSongs(DEFAULT_FAVORITE_SONGS);
@@ -366,18 +404,18 @@ export default function MainApp() {
     if (!playlistId) return;
     setSyncLoading(true);
     try {
-        const res = await fetch(`/api/netease/playlist/${playlistId}`);
-        const data = await res.json();
-        if (data.success && data.songs.length > 0) {
-            setPlaylistSongs(data.songs);
-            localStorage.setItem(`playlist_${playlistId}`, JSON.stringify(data.songs));
+        const songs = await fetchSongsFromNetease(playlistId);
+        if (songs && songs.length > 0) {
+            setPlaylistSongs(songs);
+            localStorage.setItem(`playlist_${playlistId}`, JSON.stringify(songs));
             setShowSettings(false);
         } else {
             console.warn('Sync failed: Playlist incorrect or private');
+            alert('同步失败：未找到有效歌曲 (可能歌单设置了隐私或ID错误)');
         }
     } catch (err) {
         console.error(err);
-        alert('同步失败，请稍后再试');
+        alert('同步异常，请网络检查或稍后再试');
     } finally {
         setSyncLoading(false);
     }
