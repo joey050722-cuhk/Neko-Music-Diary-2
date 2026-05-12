@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Music, Sparkles, RefreshCw, Heart, Cat as CatIcon, Volume2, VolumeX, Share2, X, Settings, Download } from 'lucide-react';
+import { Music, Sparkles, RefreshCw, Heart, Cat as CatIcon, Volume2, VolumeX, Share2, X, Settings, Download, HelpCircle, ChevronRight } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Song, OutfitSuggestion } from '../types';
 import { DEFAULT_FAVORITE_SONGS } from '../constants';
@@ -40,6 +40,11 @@ const SketchyCat: React.FC<{ accessory?: string; pose?: 'sitting' | 'lying' }> =
 
   return (
     <div className="relative w-56 h-56 mx-auto mb-4 flex items-center justify-center select-none group">
+      {/* Interaction Hint Bubbles */}
+      <div className="absolute -top-4 -right-4 opacity-0 group-hover:opacity-100 transition-opacity bg-white border border-stone-100 px-3 py-1.5 rounded-full shadow-sm text-[10px] font-black pointer-events-none z-20 text-pink-400 animate-bounce">
+        试试抚摸我 ✨
+      </div>
+      
       <AnimatePresence>
         {reactions.map(reaction => (
           <motion.div
@@ -250,6 +255,7 @@ export default function MainApp() {
     }
   });
   const [syncLoading, setSyncLoading] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const [suggestionCache, setSuggestionCache] = useState<Record<string, OutfitSuggestion>>({});
   const [currentTime, setCurrentTime] = useState<string>(''); // Keep for initial render if needed
   const [weatherContext, setWeatherContext] = useState<string>('清爽');
@@ -479,43 +485,45 @@ export default function MainApp() {
         audio.volume = volume;
         audio.muted = false;
         
-        // Wait for previous play to potentially finish
-        if (playPromiseRef.current) {
-            try { await playPromiseRef.current; } catch(e) {}
-        }
-
+        // Don't await previous, just stop it and switch
         audio.pause();
+        setIsBuffering(true);
         
-        // Try multiple URL formats for best compatibility
-        const primaryUrl = song.mp3Url;
+        // Standard NetEase outer link (Primary)
+        const primaryUrl = `https://music.163.com/song/media/outer/url?id=${song.id}.mp3`;
+        // Reliable proxy (Secondary)
         const secondaryUrl = `https://link.hhtjim.com/163/${song.id}.mp3`;
         
         audio.src = primaryUrl;
         audio.currentTime = 0;
         
-        playPromiseRef.current = audio.play();
-        playPromiseRef.current.then(() => {
-            setIsPlaying(true);
-            setAudioError(null);
-        }).catch(err => {
-            if (err.name !== 'AbortError') {
-                console.warn("Primary source failed, trying fallback...", err);
-                audio.src = secondaryUrl;
-                audio.currentTime = 0;
-                audio.play().then(() => {
-                    setIsPlaying(true);
-                    setAudioError(null);
-                }).catch(err2 => {
-                    console.error("All audio sources failed:", err2);
+        const tryPlay = async (url: string, isRetry: boolean = false) => {
+            try {
+                audio.src = url;
+                await audio.play();
+                setIsPlaying(true);
+                setIsBuffering(false);
+                setAudioError(null);
+            } catch (err: any) {
+                if (err.name === 'AbortError') return;
+                
+                if (!isRetry) {
+                    console.warn("Primary source failed, trying fallback...", err);
+                    await tryPlay(secondaryUrl, true);
+                } else {
+                    console.error("All audio sources failed:", err);
                     setIsPlaying(false);
-                    if (err2.name === 'NotAllowedError') {
-                      setAudioError("浏览器拦截了自动播放，请点击下方音符按钮播放");
+                    setIsBuffering(false);
+                    if (err.name === 'NotAllowedError') {
+                      setAudioError("浏览器拦截了自动播放，请点击音板播放");
                     } else {
-                      setAudioError("该曲目在当前环境下无法播放 (CORS/Region Lock)");
+                      setAudioError("该曲目当前无法播放 (版权或网络限制)");
                     }
-                });
+                }
             }
-        });
+        };
+
+        playPromiseRef.current = tryPlay(primaryUrl);
     }
 
     // Check cache first for faster response
@@ -594,6 +602,13 @@ export default function MainApp() {
           <h1 className="font-black text-lg tracking-tight text-pink-500 italic">Neko Music Box</h1>
         </div>
         <div className="flex gap-1 md:gap-2">
+            <button 
+                onClick={() => setShowHelp(true)}
+                className="p-2 hover:bg-pink-100 rounded-full transition-colors group"
+                title="How to play"
+            >
+                <HelpCircle className="w-4 h-4 md:w-5 md:h-5 text-stone-400 group-hover:text-pink-500" />
+            </button>
             <button 
                 onClick={() => setShowSettings(true)}
                 className="p-2 hover:bg-pink-100 rounded-full transition-colors group"
@@ -810,6 +825,11 @@ export default function MainApp() {
                         ) : (
                             <Music className="w-8 h-8 text-stone-200 group-hover:text-pink-400 transition-colors" />
                         )}
+                        {(isBuffering || loading) && (
+                            <div className="absolute inset-0 bg-white/60 backdrop-blur-[2px] flex items-center justify-center">
+                                <RefreshCw className="w-6 h-6 text-pink-400 animate-spin" />
+                            </div>
+                        )}
                         {audioError && (
                             <div className="absolute inset-0 bg-stone-900/40 backdrop-blur-sm flex items-center justify-center">
                                 <VolumeX className="w-6 h-6 text-white" />
@@ -989,8 +1009,99 @@ export default function MainApp() {
             </motion.div>
         )}
       </AnimatePresence>
+      {/* Tips Bar */}
+      {!isFirstTime && (
+        <div className="mt-8 w-full max-w-md overflow-hidden relative h-6">
+            <motion.div 
+                animate={{ x: [200, -600] }}
+                transition={{ repeat: Infinity, duration: 25, ease: "linear" }}
+                className="whitespace-nowrap flex items-center gap-4 text-[10px] font-black text-stone-400 uppercase tracking-widest italic"
+            >
+                <div className="flex items-center gap-1"><Sparkles className="w-3 h-3" /> 点击猫咪的头可以和它互动哦</div>
+                <div className="flex items-center gap-1 text-pink-300">● 同步闺蜜歌单请进入右上角设置</div>
+                <div className="flex items-center gap-1"><Sparkles className="w-3 h-3" /> 每首歌都有专属的穿搭小故事</div>
+                <div className="flex items-center gap-1 text-teal-300">● 试试深夜或清晨打开，会有不一样的氛围</div>
+            </motion.div>
+        </div>
+      )}
 
-      {/* Footer */}
+      {/* Help Modal */}
+      <AnimatePresence>
+        {showHelp && (
+            <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 bg-stone-900/40 backdrop-blur-md z-[110] flex items-center justify-center p-6"
+            >
+                <motion.div 
+                    initial={{ scale: 0.9, y: 20 }}
+                    animate={{ scale: 1, y: 0 }}
+                    className="bg-white p-8 rounded-3xl border-2 border-stone-800 shadow-[10px_10px_0px_0px_rgba(41,37,36,1)] max-w-sm w-full"
+                >
+                    <div className="flex justify-between items-center mb-6">
+                        <h3 className="font-black text-xl flex items-center gap-2 italic">
+                            <Sparkles className="w-5 h-5 text-pink-400" />
+                            玩法指南
+                        </h3>
+                        <button onClick={() => setShowHelp(false)} className="p-1 hover:bg-stone-50 rounded-lg"><X className="w-6 h-6" /></button>
+                    </div>
+                    
+                    <div className="space-y-6 overflow-y-auto max-h-[60vh] pr-2 custom-scrollbar text-left">
+                        <section className="space-y-3">
+                            <div className="flex items-center gap-2 text-pink-500 text-xs font-black uppercase tracking-widest">
+                                <ChevronRight className="w-4 h-4" /> 如何开始
+                            </div>
+                            <div className="p-4 bg-pink-50 rounded-2xl border border-pink-100 text-sm leading-relaxed text-stone-600">
+                                默认预设了一组歌曲。点击 <span className="font-black text-pink-500">“点开惊喜”</span> 即可随机抽取一首歌曲和专属穿搭。
+                            </div>
+                        </section>
+
+                        <section className="space-y-3">
+                            <div className="flex items-center gap-2 text-teal-500 text-xs font-black uppercase tracking-widest">
+                                <ChevronRight className="w-4 h-4" /> 宠爱猫咪
+                            </div>
+                            <div className="p-4 bg-teal-50 rounded-2xl border border-teal-100 text-sm leading-relaxed text-stone-600">
+                                猫咪是活的！点击它的不同部位会有反应：
+                                <ul className="mt-2 space-y-1 list-disc list-inside font-bold">
+                                    <li>头：它会跟着旋律微微晃动 🎵</li>
+                                    <li>背：它会向你表达爱意 ❤️</li>
+                                    <li>尾巴：千万别乱戳，它会生气哦 💢</li>
+                                    <li>肚子：会有亮晶晶的奇迹 ✨</li>
+                                </ul>
+                            </div>
+                        </section>
+
+                        <section className="space-y-3">
+                            <div className="flex items-center gap-2 text-lime-600 text-xs font-black uppercase tracking-widest">
+                                <ChevronRight className="w-4 h-4" /> 同步歌单
+                            </div>
+                            <div className="p-4 bg-lime-50 rounded-2xl border border-lime-100 text-sm leading-relaxed text-stone-600">
+                                点击右上角 <Settings className="w-3 h-3 inline pb-0.5" /> 设置，输入网易云歌单 ID 即可同步。如果无法播放，可能因为版权或地区限制。
+                            </div>
+                        </section>
+
+                        <section className="space-y-3">
+                            <div className="flex items-center gap-2 text-amber-500 text-xs font-black uppercase tracking-widest">
+                                <ChevronRight className="w-4 h-4" /> 关于穿搭
+                            </div>
+                            <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 text-sm leading-relaxed text-stone-600 italic">
+                                每首歌都有独特的穿搭灵魂。是根据格、天气和时间自动生成的。如果你不喜欢，可以点击 <span className="font-black">“再次开启”</span> 来个新惊喜！
+                            </div>
+                        </section>
+                    </div>
+
+                    <button 
+                        onClick={() => setShowHelp(false)}
+                        className="w-full mt-6 py-4 bg-stone-800 text-white font-black rounded-2xl shadow-[4px_4px_0px_0px_rgba(251,113,133,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all"
+                    >
+                        我知道啦，这就出发！
+                    </button>
+                </motion.div>
+            </motion.div>
+        )}
+      </AnimatePresence>
+
       <footer className="mt-12 mb-20 text-stone-300 text-[10px] font-black tracking-[0.5em] uppercase text-center opacity-50 z-10">
         Netease Music × Bestie Pink Edition
       </footer>
