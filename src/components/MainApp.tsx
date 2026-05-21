@@ -18,7 +18,7 @@ const HandDrawnBg: React.FC = React.memo(() => (
        style={{ backgroundImage: 'radial-gradient(rgba(16, 185, 129, 0.2) 1.5px, transparent 1.5px)', backgroundSize: '32px 32px' }} />
 ));
 
-const SketchyCat: React.FC<{ accessory?: string; pose?: 'sitting' | 'lying' }> = React.memo(({ accessory, pose = 'sitting' }) => {
+const SketchyCat: React.FC<{ accessory?: string; pose?: 'sitting' | 'lying'; isLoading?: boolean }> = React.memo(({ accessory, pose = 'sitting', isLoading }) => {
   const [reactions, setReactions] = useState<{ id: number; x: number; y: number; emoji: string }[]>([]);
   const [activePart, setActivePart] = useState<string | null>(null);
 
@@ -41,9 +41,16 @@ const SketchyCat: React.FC<{ accessory?: string; pose?: 'sitting' | 'lying' }> =
   return (
     <div className="relative w-56 h-56 mx-auto mb-4 flex items-center justify-center select-none group">
       {/* Interaction Hint Bubbles */}
-      <div className="absolute -top-4 -right-4 opacity-0 group-hover:opacity-100 transition-opacity bg-white border border-stone-100 px-3 py-1.5 rounded-full shadow-sm text-[10px] font-black pointer-events-none z-20 text-pink-400 animate-bounce">
-        试试抚摸我 ✨
-      </div>
+      {isLoading ? (
+        <div className="absolute -top-8 -right-16 bg-white border-2 border-pink-200 px-4 py-2 rounded-2xl rounded-bl-none shadow-md text-xs font-black pointer-events-none z-20 text-pink-500 animate-bounce whitespace-nowrap">
+          喵～正在为你准备惊喜...<br/>
+          <span className="text-[10px] text-stone-500 mt-1 block leading-tight">等待期间来试试抚摸我体验互动吧！✨</span>
+        </div>
+      ) : (
+        <div className="absolute -top-4 -right-4 opacity-0 group-hover:opacity-100 transition-opacity bg-white border border-stone-100 px-3 py-1.5 rounded-full shadow-sm text-[10px] font-black pointer-events-none z-20 text-pink-400 animate-bounce">
+          试试抚摸我 ✨
+        </div>
+      )}
       
       <AnimatePresence>
         {reactions.map(reaction => (
@@ -244,9 +251,11 @@ export default function MainApp() {
   const [showQR, setShowQR] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [pose, setPose] = useState<'sitting' | 'lying'>('sitting');
-  const [playlistId, setPlaylistId] = useState('2426162777'); // User's requested playlist
+  const [playlistId, setPlaylistId] = useState(() => localStorage.getItem('last_playlist_id') || '2426162777'); // Default to friend's playlist if none chosen
   const [playlistSongs, setPlaylistSongs] = useState<Song[]>(() => {
-    const cached = localStorage.getItem(`playlist_${playlistId}`);
+    // Need to dynamically evaluate based on actual state, but state init runs once.
+    const cachedId = localStorage.getItem('last_playlist_id') || '2426162777';
+    const cached = localStorage.getItem(`playlist_${cachedId}`);
     try {
       const parsed = cached ? JSON.parse(cached) : [];
       return parsed; // Removed DEFAULT_FAVORITE_SONGS fallback so it will fetch real songs
@@ -398,8 +407,10 @@ export default function MainApp() {
             if (audioRef.current) audioRef.current.pause();
             setIsPlaying(false);
             bgMusicRef.current.volume = volume;
-            bgMusicRef.current.play().catch(err => {
-                console.error("Ambience music failed to play:", err);
+            bgMusicRef.current.play().catch((err: any) => {
+                if (err.name !== 'AbortError') {
+                    console.error("Ambience music failed to play:", err);
+                }
             });
         }
         setIsBgMusicPlaying(!isBgMusicPlaying);
@@ -413,6 +424,7 @@ export default function MainApp() {
         const songs = await fetchSongsFromNetease(playlistId);
         if (songs && songs.length > 0) {
             setPlaylistSongs(songs);
+            localStorage.setItem('last_playlist_id', playlistId);
             localStorage.setItem(`playlist_${playlistId}`, JSON.stringify(songs));
             setShowSettings(false);
         } else {
@@ -489,10 +501,10 @@ export default function MainApp() {
         audio.pause();
         setIsBuffering(true);
         
-        // Standard NetEase outer link (Primary)
-        const primaryUrl = `https://music.163.com/song/media/outer/url?id=${song.id}.mp3`;
-        // Reliable proxy (Secondary)
-        const secondaryUrl = `https://link.hhtjim.com/163/${song.id}.mp3`;
+        // Reliable proxy (Primary)
+        const primaryUrl = `https://link.hhtjim.com/163/${song.id}.mp3`;
+        // Standard NetEase outer link (Fallback)
+        const secondaryUrl = `https://music.163.com/song/media/outer/url?id=${song.id}.mp3`;
         
         audio.src = primaryUrl;
         audio.currentTime = 0;
@@ -604,10 +616,16 @@ export default function MainApp() {
         <div className="flex gap-1 md:gap-2">
             <button 
                 onClick={() => setShowHelp(true)}
-                className="p-2 hover:bg-pink-100 rounded-full transition-colors group"
+                className="p-2 hover:bg-pink-100 rounded-full transition-colors group relative"
                 title="How to play"
             >
-                <HelpCircle className="w-4 h-4 md:w-5 md:h-5 text-stone-400 group-hover:text-pink-500" />
+                <HelpCircle className={`w-4 h-4 md:w-5 md:h-5 ${isFirstTime ? 'text-pink-500' : 'text-stone-400 group-hover:text-pink-500'}`} />
+                {isFirstTime && (
+                    <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-pink-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-3 w-3 bg-pink-500"></span>
+                    </span>
+                )}
             </button>
             <button 
                 onClick={() => setShowSettings(true)}
@@ -659,15 +677,26 @@ export default function MainApp() {
                     </div>
                     <div className="space-y-4">
                         <div>
-                            <label className="block text-[10px] font-black text-stone-400 uppercase tracking-widest mb-2">歌单 ID</label>
+                            <label className="block text-[10px] font-black text-stone-400 uppercase tracking-widest mb-2">歌单 ID 或 链接</label>
                             <input 
                                 type="text"
                                 value={playlistId}
-                                onChange={(e) => setPlaylistId(e.target.value)}
-                                placeholder="输入网易云公开歌单ID"
-                                className="w-full p-4 bg-stone-50 border-2 border-stone-100 rounded-2xl focus:border-pink-400 outline-none transition-colors font-bold"
+                                onChange={(e) => {
+                                    let val = e.target.value.trim();
+                                    // Parse ID from URL if user pastes a full NetEase link
+                                    const match = val.match(/id=([0-9]+)/);
+                                    if (match && match[1]) {
+                                        val = match[1];
+                                    }
+                                    setPlaylistId(val);
+                                }}
+                                placeholder="输入歌单ID或粘贴网易云分享链接"
+                                className="w-full p-4 bg-stone-50 border-2 border-stone-100 rounded-2xl focus:border-pink-400 outline-none transition-colors font-bold text-sm"
                             />
-                            <p className="text-[10px] text-stone-400 mt-2 italic font-medium">提示：歌单ID在分享链接中，如 playlist?id=24381616</p>
+                            <p className="text-[10px] text-stone-400 mt-2 italic font-medium leading-relaxed">
+                                提示：你可以导入任何人的公开歌单。<br/>
+                                去网易云音乐复制链接粘入此处即可，例如包含 <b>id=123456</b> 的链接。
+                            </p>
                         </div>
                         <button 
                             onClick={syncPlaylist}
@@ -780,9 +809,18 @@ export default function MainApp() {
                   <SketchyCat pose={pose} />
               </div>
               <h2 className="text-2xl font-black mb-4 tracking-tighter">嘿，今日份的温暖！</h2>
-              <p className="text-stone-500 mb-10 leading-relaxed text-sm font-medium">
-                从你的歌单收藏中随机抽取一首<br/>看看猫咪今天会穿成什么样来见你？
-              </p>
+              
+              {/* Obvious Guide for New Users */}
+              <div className="w-full bg-pink-50/50 border border-pink-100 rounded-2xl p-4 mb-6 text-left space-y-3">
+                  <div className="text-xs font-black text-pink-500 uppercase tracking-widest flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4" /> 游玩指南
+                  </div>
+                  <ul className="text-xs text-stone-600 font-bold space-y-2">
+                      <li className="flex items-start gap-2"><span className="text-pink-400">❶</span> 点击下方按钮，抽取今日专属音乐与穿搭灵感</li>
+                      <li className="flex items-start gap-2"><span className="text-pink-400">❷</span> 音乐播放时，可以<b>抚摸（点击）猫咪</b>的不同部位互动</li>
+                      <li className="flex items-start gap-2"><span className="text-pink-400">❸</span> 点击右上角 <Settings className="w-3.5 h-3.5 inline pb-0.5 text-stone-400" /> 支持随时导入自己的网易云歌单</li>
+                  </ul>
+              </div>
                 <button
                   disabled={loading || playlistSongs.length === 0}
                   onClick={() => {
@@ -799,7 +837,18 @@ export default function MainApp() {
                     syncLoading ? '正在读取闺蜜歌单...' : '歌单读取失败'
                 ) : loading || isBuffering ? '正在开启 ✨' : '点开惊喜 ✨'}
               </button>
-              {syncLoading && <div className="mt-4 text-[10px] text-stone-300 font-bold animate-pulse">正在从云端同步更多旋律...</div>}
+              {syncLoading ? (
+                  <div className="mt-4 text-[10px] text-stone-300 font-bold animate-pulse">正在从云端同步更多旋律...</div>
+              ) : (
+                  <div className="mt-6 flex flex-col gap-2 relative">
+                      <div className="text-[11px] text-stone-400 font-bold italic flex items-center justify-center gap-1">
+                          不知道怎么玩？ <HelpCircle className="w-3.5 h-3.5 text-pink-400 inline" /> 点击右上角查看玩法
+                      </div>
+                      <div className="text-[11px] text-stone-400 font-bold italic flex items-center justify-center gap-1">
+                          想听自己的歌？ <Settings className="w-3.5 h-3.5 text-stone-400 inline" /> 去右上角设置导入专属歌单
+                      </div>
+                  </div>
+              )}
             </motion.div>
           ) : (
             <motion.div
@@ -819,14 +868,33 @@ export default function MainApp() {
                 </motion.div>
 
                 <div className="flex items-center gap-4 mb-6">
-                    <div className="w-20 h-20 bg-stone-50 border-2 border-stone-100 rounded-2xl flex items-center justify-center relative group-hover:border-pink-400 transition-all overflow-hidden shadow-md">
-                        {currentSong?.albumArt ? (
-                            <img src={currentSong.albumArt} alt="cover" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                        ) : (
-                            <Music className="w-8 h-8 text-stone-200 group-hover:text-pink-400 transition-colors" />
-                        )}
+                    <div className="w-20 h-20 bg-stone-50 border-2 border-stone-100 rounded-2xl flex items-center justify-center relative group-hover:border-pink-400 transition-all overflow-hidden shadow-md shrink-0">
+                        <AnimatePresence mode="popLayout">
+                            {currentSong?.albumArt ? (
+                                <motion.img 
+                                    key={`img-${currentSong.id}`}
+                                    initial={{ opacity: 0, scale: 0.9 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    exit={{ opacity: 0, scale: 1.1 }}
+                                    transition={{ duration: 0.3 }}
+                                    src={currentSong.albumArt} 
+                                    alt="cover" 
+                                    className="absolute inset-0 w-full h-full object-cover" 
+                                    referrerPolicy="no-referrer" 
+                                />
+                            ) : (
+                                <motion.div 
+                                    key="fallback"
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    className="absolute inset-0 flex items-center justify-center"
+                                >
+                                    <Music className="w-8 h-8 text-stone-200 group-hover:text-pink-400 transition-colors" />
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
                         {(isBuffering || loading) && (
-                            <div className="absolute inset-0 bg-white/60 backdrop-blur-[2px] flex items-center justify-center">
+                            <div className="absolute inset-0 bg-white/50 backdrop-blur-[2px] flex items-center justify-center z-10 transition-all">
                                 <RefreshCw className="w-6 h-6 text-pink-400 animate-spin" />
                             </div>
                         )}
@@ -886,32 +954,27 @@ export default function MainApp() {
                 <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-pink-200 via-rose-300 to-pink-200"></div>
                 <div className="flex flex-col items-center">
                     <div className="mb-6 relative group">
-                         <AnimatePresence mode="wait">
-                            <motion.div
-                                key={loading ? 'loading' : 'cat'}
-                                initial={{ opacity: 0, scale: 0.8 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                exit={{ opacity: 0, scale: 1.2 }}
-                            >
-                                <SketchyCat pose={pose} accessory={loading ? undefined : suggestion?.catAccessory} />
-                            </motion.div>
-                         </AnimatePresence>
+                        <SketchyCat pose={pose} accessory={loading ? undefined : suggestion?.catAccessory} isLoading={loading || isBuffering} />
                     </div>
                     
-                    {!loading && suggestion && (
+                    {(!loading && suggestion) ? (
                         <motion.div 
                             initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
-                            className="bg-white border-2 border-stone-800 rounded-2xl py-4 px-8 shadow-[4px_4px_0px_0px_rgba(41,37,36,1)] flex items-center gap-4 group hover:bg-pink-50 transition-colors"
+                            className="bg-white border-2 border-stone-800 rounded-2xl py-4 px-8 shadow-[4px_4px_0px_0px_rgba(41,37,36,1)] flex items-center gap-4 group hover:bg-pink-50 transition-colors w-full max-w-[280px]"
                         >
                             <div className="p-3 bg-pink-100 rounded-xl group-hover:bg-white transition-colors">
                                 <CatIcon className="w-5 h-5 text-pink-400" />
                             </div>
-                            <div className="text-left">
+                            <div className="text-left w-full">
                                 <div className="text-[10px] font-black text-stone-300 uppercase tracking-widest leading-none mb-1.5">Today's Cat Wear</div>
-                                <div className="font-black text-lg tracking-tight text-stone-800 italic">{suggestion.catAccessoryName}</div>
+                                <div className="font-black text-lg tracking-tight text-stone-800 italic truncate">{suggestion.catAccessoryName}</div>
                             </div>
                         </motion.div>
+                    ) : (
+                        <div className="bg-stone-50 border-2 border-stone-200 border-dashed rounded-2xl py-4 px-8 w-full max-w-[280px] h-[76px] flex items-center justify-center opacity-50">
+                            <span className="text-xs font-bold text-stone-400">正在挑选猫咪时尚单品...</span>
+                        </div>
                     )}
                 </div>
               </Card>
@@ -945,7 +1008,9 @@ export default function MainApp() {
                             e.stopPropagation();
                             if (audioRef.current) {
                                 if (isPlaying) audioRef.current.pause();
-                                else audioRef.current.play().catch(() => setAudioError("请点击页面任意处激活音频"));
+                                else audioRef.current.play().catch((e: any) => {
+                                    if (e.name !== 'AbortError') setAudioError("请点击页面任意处激活音频");
+                                });
                             }
                         }}
                     >
@@ -991,7 +1056,9 @@ export default function MainApp() {
                     <button 
                         onClick={() => {
                             if (audioRef.current) {
-                                if (audioRef.current.paused) audioRef.current.play();
+                                if (audioRef.current.paused) audioRef.current.play().catch(e => {
+                                    if(e.name !== 'AbortError') console.error(e);
+                                });
                                 else audioRef.current.pause();
                             }
                         }}
