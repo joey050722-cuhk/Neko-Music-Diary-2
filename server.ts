@@ -3,6 +3,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import axios from "axios";
+import https from "https";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -10,6 +11,24 @@ const __dirname = path.dirname(__filename);
 async function startServer() {
   const app = express();
   const PORT = 3000;
+
+  // API Route for individual NetEase Song URL resolution to bypass Mixed Content rules
+  app.get("/api/netease/song/:id", (req, res) => {
+      https.get(`https://music.163.com/song/media/outer/url?id=${req.params.id}.mp3`, (response) => {
+          if (response.statusCode === 302 || response.statusCode === 301) {
+              let location = response.headers.location || '';
+              if (location) {
+                  // Upgrade to https and follow
+                  res.redirect(location.replace('http://', 'https://'));
+                  return;
+              }
+          }
+          // The song might be VIP or blocked
+          res.status(404).json({ error: "Song unavailable or VIP only" });
+      }).on('error', () => {
+          res.status(500).json({ error: "Server connection failed" });
+      });
+  });
 
   // API Route for NetEase Playlist
   app.get("/api/netease/playlist/:id", async (req, res) => {
@@ -60,6 +79,7 @@ async function startServer() {
           if (picUrl && picUrl.startsWith('http://')) {
               picUrl = picUrl.replace('http://', 'https://');
           }
+          if (picUrl) picUrl += '?param=300y300';
           
           return {
             id: track.id.toString(),
@@ -67,7 +87,7 @@ async function startServer() {
             artist: (track.ar || track.artists || []).map((a: any) => a.name).join(', '),
             albumArt: picUrl,
             keywords: track.al?.name ? [track.al.name] : [],
-            mp3Url: `https://music.163.com/song/media/outer/url?id=${track.id}.mp3`
+            mp3Url: `/api/netease/song/${track.id}`
           };
         });
         

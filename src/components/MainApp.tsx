@@ -258,7 +258,20 @@ export default function MainApp() {
     const cached = localStorage.getItem(`playlist_${cachedId}`);
     try {
       const parsed = cached ? JSON.parse(cached) : [];
-      return parsed; // Removed DEFAULT_FAVORITE_SONGS fallback so it will fetch real songs
+      // Sanitize old cached URLs
+      return parsed.map((song: Song) => {
+          if (song.albumArt && song.albumArt.startsWith('http://')) {
+              song.albumArt = song.albumArt.replace('http://', 'https://');
+          }
+          if (song.albumArt && !song.albumArt.includes('?param')) {
+              song.albumArt += '?param=300y300';
+          }
+          if (song.mp3Url && !song.mp3Url.includes('/api/netease/song')) {
+              // Ensure old cache also routes through proxy to avoid mixed content
+              song.mp3Url = `/api/netease/song/${song.id}`;
+          }
+          return song;
+      });
     } catch {
       return [];
     }
@@ -273,6 +286,37 @@ export default function MainApp() {
   const [isAudioUnlocked, setIsAudioUnlocked] = useState(false);
   
   const [isBuffering, setIsBuffering] = useState(false);
+  
+  const hasSyncedRef = useRef(false);
+  const preloadedFirstSongRef = useRef<Song | null>(null);
+
+  // Background prefetch for first time user experience!
+  useEffect(() => {
+     if (isFirstTime && playlistSongs.length > 0 && !preloadedFirstSongRef.current && !loading && !currentSong) {
+         const preload = async () => {
+             const randomIndex = Math.floor(Math.random() * playlistSongs.length);
+             const preSong = playlistSongs[randomIndex];
+             preloadedFirstSongRef.current = preSong;
+             
+             // Temporarily grab keys but DO NOT set `currentSong` or trigger UI
+             const ACCESSORY_NAMES_ZH: Record<string, string> = {
+                red_scarf: '温暖红围巾', yellow_hat: '小黄帽', pink_bow: '少女粉蝴蝶结', cool_sunglasses: '酷酷太阳镜',
+                green_leaf: '清新小绿叶', flower: '娇点小花', headphones: '专业级耳机', star_glasses: '璀璨星镜',
+                toast: '美味吐司片', bell: '悦耳小铃铛'
+             };
+             const ACCESSORIES = Object.keys(ACCESSORY_NAMES_ZH);
+             const chosenAccessory = ACCESSORIES[Math.floor(Math.random() * ACCESSORIES.length)];
+             
+             try {
+                const res = await getOutfitSuggestion(preSong, weatherContext, new Date().toLocaleString(), chosenAccessory);
+                setSuggestionCache(prev => ({ ...prev, [preSong.id]: res }));
+             } catch(e) {
+                 // Ignore preload errors, will fallback normally
+             }
+         };
+         preload();
+     }
+  }, [playlistSongs, isFirstTime, loading, currentSong, weatherContext]);
   
   // Audio unlocker for browser policies
   useEffect(() => {
@@ -306,8 +350,6 @@ export default function MainApp() {
     const interval = setInterval(updateWeather, 3600000); 
     return () => clearInterval(interval);
   }, []);
-
-  const hasSyncedRef = useRef(false);
 
   const fetchSongsFromNetease = async (id: string) => {
       let data = null;
@@ -343,6 +385,7 @@ export default function MainApp() {
           if (picUrl && picUrl.startsWith('http://')) {
               picUrl = picUrl.replace('http://', 'https://');
           }
+          if (picUrl) picUrl += '?param=300y300';
           
           return {
             id: track.id.toString(),
@@ -350,7 +393,7 @@ export default function MainApp() {
             artist: (track.ar || track.artists || []).map((a: any) => a.name).join(', '),
             albumArt: picUrl,
             keywords: track.al?.name ? [track.al.name] : [],
-            mp3Url: `https://music.163.com/song/media/outer/url?id=${track.id}.mp3`
+            mp3Url: `/api/netease/song/${track.id}`
           };
       });
   };
@@ -480,13 +523,25 @@ export default function MainApp() {
     // Pick a random song or use explicit
     let song = explicitSong;
     if (!song) {
-        const randomIndex = Math.floor(Math.random() * playlistSongs.length);
-        song = playlistSongs[randomIndex];
+        if (isFirstTime && preloadedFirstSongRef.current) {
+            song = preloadedFirstSongRef.current;
+        } else if (playlistSongs.length <= 1) {
+            song = playlistSongs[0];
+        } else {
+            let randomIndex = Math.floor(Math.random() * playlistSongs.length);
+            song = playlistSongs[randomIndex];
+            let attempts = 0;
+            // Prevent consecutive duplicate songs
+            while (currentSong && song.id === currentSong.id && attempts < 5) {
+                randomIndex = Math.floor(Math.random() * playlistSongs.length);
+                song = playlistSongs[randomIndex];
+                attempts++;
+            }
+        }
     }
     setCurrentSong(song);
     
-    // Instantly transition the screen, show song info immediately
-    setIsFirstTime(false);
+    // Instantly show song info without transitioning screen yet
     setSuggestion(null);
 
     // Pick a random accessory that is DIFFERENT from the last one if possible
@@ -509,10 +564,10 @@ export default function MainApp() {
         audio.pause();
         setIsBuffering(true);
         
-        // Reliable proxy (Primary)
-        const primaryUrl = `https://link.hhtjim.com/163/${song.id}.mp3`;
-        // Standard NetEase outer link (Fallback)
-        const secondaryUrl = `https://music.163.com/song/media/outer/url?id=${song.id}.mp3`;
+        // Our proxy that fixes HTTPS Mixed Content (Primary)
+        const primaryUrl = `/api/netease/song/${song.id}`;
+        // Reliable external proxy (Fallback)
+        const secondaryUrl = `https://link.hhtjim.com/163/${song.id}.mp3`;
         
         audio.src = primaryUrl;
         audio.currentTime = 0;
@@ -558,6 +613,8 @@ export default function MainApp() {
     if (suggestionCache[song.id]) {
         setSuggestion(suggestionCache[song.id]);
         setLoading(false);
+        // Only hide rules once everything is fully buffered/loaded
+        setIsFirstTime(false);
     } else {
         try {
             // Fetch the suggestion while the user is already listening to the music!
@@ -598,6 +655,8 @@ export default function MainApp() {
             setSuggestion(fallback);
         } finally {
             setLoading(false);
+            // Wait for at least the reading time if it is the first time!
+            setIsFirstTime(false);
         }
     }
   };
