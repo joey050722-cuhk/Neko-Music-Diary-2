@@ -55,14 +55,21 @@ async function startServer() {
             // We could fetch more here, but for now let's hope for the best with tracks field.
         }
 
-        const songs = rawTracks.map((track: any) => ({
-          id: track.id.toString(),
-          title: track.name,
-          artist: (track.ar || track.artists || []).map((a: any) => a.name).join(', '),
-          albumArt: track.al?.picUrl || (track.album && track.album.picUrl),
-          keywords: track.al?.name ? [track.al.name] : [],
-          mp3Url: `https://music.163.com/song/media/outer/url?id=${track.id}.mp3`
-        }));
+        const songs = rawTracks.map((track: any) => {
+          let picUrl = track.al?.picUrl || (track.album && track.album.picUrl) || null;
+          if (picUrl && picUrl.startsWith('http://')) {
+              picUrl = picUrl.replace('http://', 'https://');
+          }
+          
+          return {
+            id: track.id.toString(),
+            title: track.name,
+            artist: (track.ar || track.artists || []).map((a: any) => a.name).join(', '),
+            albumArt: picUrl,
+            keywords: track.al?.name ? [track.al.name] : [],
+            mp3Url: `https://music.163.com/song/media/outer/url?id=${track.id}.mp3`
+          };
+        });
         
         console.log(`Found ${songs.length} songs`);
         if (songs.length > 0) {

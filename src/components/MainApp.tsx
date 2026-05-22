@@ -338,14 +338,21 @@ export default function MainApp() {
       const rawTracks = data?.playlist?.tracks || data?.result?.tracks || [];
       if (rawTracks.length === 0) return null;
 
-      return rawTracks.map((track: any) => ({
-          id: track.id.toString(),
-          title: track.name,
-          artist: (track.ar || track.artists || []).map((a: any) => a.name).join(', '),
-          albumArt: track.al?.picUrl || (track.album && track.album.picUrl),
-          keywords: track.al?.name ? [track.al.name] : [],
-          mp3Url: `https://music.163.com/song/media/outer/url?id=${track.id}.mp3`
-      }));
+      return rawTracks.map((track: any) => {
+          let picUrl = track.al?.picUrl || (track.album && track.album.picUrl) || null;
+          if (picUrl && picUrl.startsWith('http://')) {
+              picUrl = picUrl.replace('http://', 'https://');
+          }
+          
+          return {
+            id: track.id.toString(),
+            title: track.name,
+            artist: (track.ar || track.artists || []).map((a: any) => a.name).join(', '),
+            albumArt: picUrl,
+            keywords: track.al?.name ? [track.al.name] : [],
+            mp3Url: `https://music.163.com/song/media/outer/url?id=${track.id}.mp3`
+          };
+      });
   };
 
   // Auto-sync on first mount or whenever playlistId changes
@@ -384,6 +391,7 @@ export default function MainApp() {
 
   const handleAudioError = (e: any) => {
     console.error("Audio playback error:", e);
+    setIsBuffering(false);
     setAudioError("这首歌可能由于版权或网络原因无法播放 T_T");
   };
 
@@ -512,7 +520,15 @@ export default function MainApp() {
         const tryPlay = async (url: string, isRetry: boolean = false) => {
             try {
                 audio.src = url;
-                await audio.play();
+                
+                // Add a 15 second timeout to audio.play() to prevent infinite hanging
+                const playPromise = audio.play();
+                const timeoutPromise = new Promise((_, reject) => {
+                    setTimeout(() => reject(new Error('Audio load timeout')), 15000);
+                });
+                
+                await Promise.race([playPromise, timeoutPromise]);
+                
                 setIsPlaying(true);
                 setIsBuffering(false);
                 setAudioError(null);
@@ -520,7 +536,7 @@ export default function MainApp() {
                 if (err.name === 'AbortError') return;
                 
                 if (!isRetry) {
-                    console.warn("Primary source failed, trying fallback...", err);
+                    console.warn("Primary source failed/timed out, trying fallback...", err);
                     await tryPlay(secondaryUrl, true);
                 } else {
                     console.error("All audio sources failed:", err);
@@ -545,7 +561,12 @@ export default function MainApp() {
     } else {
         try {
             // Fetch the suggestion while the user is already listening to the music!
-            const res = await getOutfitSuggestion(song, weatherContext, new Date().toLocaleString(), chosenAccessory);
+            // Apply a 10s timeout to avoid keeping user in a spinner state endlessly
+            const fetchPromise = getOutfitSuggestion(song, weatherContext, new Date().toLocaleString(), chosenAccessory);
+            const geminiTimeout = new Promise<OutfitSuggestion>((_, reject) => {
+                setTimeout(() => reject(new Error('Suggestion timeout')), 10000);
+            });
+            const res = await Promise.race([fetchPromise, geminiTimeout]);
             setSuggestion(res);
             setSuggestionCache(prev => ({ ...prev, [song.id]: res }));
         } catch (err) {
@@ -589,7 +610,7 @@ export default function MainApp() {
       <audio 
         ref={audioRef} 
         preload="auto"
-        onPlay={() => { setIsPlaying(true); setIsBuffering(false); }}
+        onPlay={() => { setIsPlaying(true); }}
         onPause={() => setIsPlaying(false)}
         onWaiting={() => setIsBuffering(true)}
         onPlaying={() => setIsBuffering(false)}
@@ -772,11 +793,16 @@ export default function MainApp() {
                         }}
                         className="p-4 border-2 border-stone-100 rounded-2xl hover:border-pink-200 hover:bg-pink-50/50 transition-all flex items-center gap-3 group cursor-pointer active:scale-95"
                       >
-                        <div className="w-12 h-12 bg-white border-2 border-stone-100 rounded-xl flex items-center justify-center group-hover:border-pink-400 transition-all overflow-hidden shadow-sm flex-shrink-0">
-                            {song.albumArt ? (
-                                <img src={song.albumArt} alt="cover" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                            ) : (
-                                <Music className="w-5 h-5 text-stone-300 group-hover:text-pink-400" />
+                        <div className="w-12 h-12 bg-stone-50 border-2 border-stone-100 rounded-xl flex items-center justify-center relative group-hover:border-pink-400 transition-all overflow-hidden shadow-sm flex-shrink-0">
+                            <Music className="w-5 h-5 text-stone-300 group-hover:text-pink-400 absolute transition-colors" />
+                            {song.albumArt && (
+                                <img 
+                                    src={song.albumArt} 
+                                    alt="cover" 
+                                    className="absolute inset-0 w-full h-full object-cover z-10" 
+                                    referrerPolicy="no-referrer"
+                                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                                />
                             )}
                         </div>
                         <div className="flex-1 overflow-hidden">
@@ -870,7 +896,15 @@ export default function MainApp() {
                 <div className="flex items-center gap-4 mb-6">
                     <div className="w-20 h-20 bg-stone-50 border-2 border-stone-100 rounded-2xl flex items-center justify-center relative group-hover:border-pink-400 transition-all overflow-hidden shadow-md shrink-0">
                         <AnimatePresence mode="popLayout">
-                            {currentSong?.albumArt ? (
+                            <motion.div 
+                                key="fallback"
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                className="absolute inset-0 flex items-center justify-center"
+                            >
+                                <Music className="w-8 h-8 text-stone-200 group-hover:text-pink-400 transition-colors" />
+                            </motion.div>
+                            {currentSong?.albumArt && (
                                 <motion.img 
                                     key={`img-${currentSong.id}`}
                                     initial={{ opacity: 0, scale: 0.9 }}
@@ -879,18 +913,10 @@ export default function MainApp() {
                                     transition={{ duration: 0.3 }}
                                     src={currentSong.albumArt} 
                                     alt="cover" 
-                                    className="absolute inset-0 w-full h-full object-cover" 
-                                    referrerPolicy="no-referrer" 
+                                    className="absolute inset-0 w-full h-full object-cover z-10" 
+                                    referrerPolicy="no-referrer"
+                                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
                                 />
-                            ) : (
-                                <motion.div 
-                                    key="fallback"
-                                    initial={{ opacity: 0 }}
-                                    animate={{ opacity: 1 }}
-                                    className="absolute inset-0 flex items-center justify-center"
-                                >
-                                    <Music className="w-8 h-8 text-stone-200 group-hover:text-pink-400 transition-colors" />
-                                </motion.div>
                             )}
                         </AnimatePresence>
                         {(isBuffering || loading) && (
@@ -922,10 +948,10 @@ export default function MainApp() {
                 </div>
 
                 <div className="border-t-2 border-dashed border-stone-100 pt-6 min-h-[140px] relative">
-                    {loading && !suggestion ? (
+                    {(loading || isBuffering) || !suggestion ? (
                         <div className="absolute inset-0 flex flex-col items-center justify-center pt-2">
                              <RefreshCw className="w-6 h-6 text-pink-300 animate-spin mb-3" />
-                             <div className="text-xs font-bold text-stone-400">正在为你构思今日穿搭...</div>
+                             <div className="text-xs font-bold text-stone-400">正在为你构思今日穿搭 和 加载音乐...</div>
                              <div className="text-[10px] text-pink-300 mt-1">（摸摸头上的小猫咪吧！）</div>
                         </div>
                     ) : (
@@ -957,7 +983,7 @@ export default function MainApp() {
                         <SketchyCat pose={pose} accessory={loading ? undefined : suggestion?.catAccessory} isLoading={loading || isBuffering} />
                     </div>
                     
-                    {(!loading && suggestion) ? (
+                    {(!loading && !isBuffering && suggestion) ? (
                         <motion.div 
                             initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
@@ -1068,9 +1094,9 @@ export default function MainApp() {
                     </button>
                     <button 
                         onClick={() => { if (!loading) drawCard(); }}
-                        className="p-2 text-stone-400 hover:text-pink-500 transition-colors"
+                        className={`p-2 transition-colors ${loading ? 'text-pink-300' : 'text-stone-400 hover:text-pink-500'}`}
                     >
-                        <RefreshCw className="w-5 h-5" />
+                        <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
                     </button>
                 </div>
             </motion.div>
